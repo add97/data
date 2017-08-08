@@ -3,58 +3,78 @@ from datetime import datetime
 from datetime import timedelta
 from dateutil.relativedelta import relativedelta
 from prettytable import PrettyTable
+import math
 
 uri = 'mongodb://alex_du:klajsdoiuhos@candidate.21.mongolayer.com:11694/habitat'
 db_name = 'habitat'
+today = datetime.today()
 
 def connect(uri, db_name):
     client = MongoClient(uri)
     return client[db_name]
 
-def dailyOrderProgress(db):
-    today = str(datetime.today()).split()[0]
-    d = timedelta(days=7)
-    lastDay = str(datetime.today() - d).split()[0]
+def evalFields(txFields):
+    for i in range(0, len(txFields)):
+        if txFields[i] == None or math.isnan(txFields[i]):
+            txFields[i] = 0
+        if isinstance(txFields[i], int):
+            txFields[i] = txFields / 1.0
+    return txFields
 
-    todayTR = 0
-    pastTR = 0
+def evalDivisor(divisor):
+    return int(1 if divisor is 0 else divisor)
+
+def calcDailyData(tx, todayCount, lastDayCount, todayTR, lastDayTR, todayTips, lastDayTips, todayDV, lastDayDV):
+    txDay = tx['createdAt'].split()[0]
+    txFields = [tx['vendorCommission'], tx['deliveryFee'], tx['chargeFee'], tx['tip'], tx['dropoffVariation']]
+    evalFields(txFields)
+
+    if txDay == str(today).split()[0]:
+        todayCount += 1
+        todayTR += tx[0] + tx[1] + tx[2]
+        todayTips += tx[3]
+        todayDV += tx[4]
+    elif txDay == str(today - timedelta(days=7)).split()[0]:
+        lastDayCount += 1
+        lastDayTR += tx[0] + tx[1] + tx[2]
+        lastDayTips += tx[3]
+        lastDayDV += tx[4]
+
+    return [todayCount, lastDayCount, todayTR, lastDayTR, todayTips, lastDayTips, todayDV, lastDayDV]
+
+def dailyDataMetrics(db):
     todayCount = 0
-    pastCount = 0
+    lastDayCount = 0
+    todayTR = 0
+    lastDayTR = 0
     todayTips = 0
-    pastTips = 0
-    currentDropVar = 0
-    pastDropVar = 0
+    lastDayTips = 0
+    todayDV = 0
+    lastDayDV = 0
 
-    for t in db.mastertransactions.find({'company_name': {'$ne': 'TEST VENDOR'}}):
-        if t['_id'] != '4rhfSBnbaQw5geGNc' and t['_id'] != 'qLLKN4qdDr25Qq5vg' and t['_id'] != 'vx3CmvS8QoYrYkANM':
-            txDay = t['createdAt'].split()[0]
-            if txDay == today:
-                todayCount += 1
-                todayTR += t['vendorCommission'] + t['deliveryFee'] + int(0 if t['chargeFee'] is None else t['chargeFee'])
-                todayTips += t['tip']
-                currentDropVar += t['dropoffVariation']
-            elif txDay == lastDay:
-                pastCount += 1
-                pastTR += t['vendorCommission'] + t['deliveryFee'] + int(0 if t['chargeFee'] is None else t['chargeFee'])
-                pastTips += t['tip']
-                pastDropVar = pastDropVar + t['dropoffVariation']
+    for tx in db.mastertransactions.find({'company_name': {'$ne': 'TEST VENDOR'}}):
+        if tx['_id'] != '4rhfSBnbaQw5geGNc' and tx['_id'] != 'qLLKN4qdDr25Qq5vg' and tx['_id'] != 'vx3CmvS8QoYrYkANM':
+            calcDailyData(tx, todayCount, lastDayCount, todayTR, lastDayTR, todayTips, lastDayTips, todayDV, lastDayDV)
 
-    currentOrderTR = todayTR / int(1 if todayCount is 0 else todayCount)
-    pastOrderTR = pastTR / pastCount
-    currentAvgTips = todayTips / int(1 if todayCount is 0 else todayCount)
-    pastAvgTips = pastTips / pastCount
-    currentAvgDropVar = currentDropVar / int(1 if todayCount is 0 else todayCount)
-    pastAvgDropVar = pastDropVar / pastCount
-    orderProgress = '%+d' % (((int(todayCount) - int(pastCount)) / float(pastCount)) * 100)
-    TRProgress = '%+d' % (((todayTR - pastTR) / pastTR) * 100)
-    orderTRProgress = '%+d' % (((currentOrderTR - pastOrderTR) / pastOrderTR) * 100)
-    tipProgress = '%+d' % (((todayTips - pastTips) / pastTips) * 100)
-    tipAvgProgress = '%+d' % (((currentAvgTips - pastAvgTips) / pastAvgTips) * 100)
-    dropVarProgress = '%+d' % (((currentAvgDropVar - pastAvgDropVar) / pastAvgDropVar) * 100)
+    todayCount = evalDivisor(todayCount)
+    pastCount = evalDivisor(pastCount)
+    todayOrderTR = todayTR / todayCount
+    lastDayOrderTR = pastTR / pastCount
+    todayAvgTips = todayTips / todayCount
+    lastDayAvgTips = pastTips / pastCount
+    todayAvgDV = currentDropVar / todayCount
+    lastDayAvgDV = pastDropVar / pastCount
 
-    return [todayCount, pastCount, orderProgress, '%0.2f' % todayTR, '%0.2f' % pastTR, TRProgress, '%0.2f' % currentOrderTR,
-            '%0.2f' % pastOrderTR, orderTRProgress, '%0.2f' % todayTips, '%0.2f' % pastTips, tipProgress, '%0.2f' % currentAvgTips,
-            '%0.2f' % pastAvgTips, tipAvgProgress, '%0.2f' % currentAvgDropVar, '%0.2f' % pastAvgDropVar, dropVarProgress]
+    orderProgress = '%+d' % (((todayCount - pastCount) / float(pastCount)) * 100)
+    TRProgress = '%+d' % (((todayTR - lastDayTR) / lastDayTR) * 100)
+    orderTRProgress = '%+d' % (((todayOrderTR - lastDayOrderTR) / lastDayOrderTR) * 100)
+    tipProgress = '%+d' % (((todayTips - lastDayTips) / lastDayTips) * 100)
+    tipAvgProgress = '%+d' % (((todayAvgTips - lastDayAvgTips) / lastDayAvgTips) * 100)
+    DVAvgProgress = '%+d' % (((todayAvgDV - lastDayAvgDV) / lastDayAvgDV) * 100)
+
+    return [todayCount, pastCount, orderProgress, '%0.2f' % todayTR, '%0.2f' % lastDayTR, TRProgress, '%0.2f' % currentOrderTR,
+            '%0.2f' % lastDayOrderTR, orderTRProgress, '%0.2f' % todayTips, '%0.2f' % lastDayTips, tipProgress, '%0.2f' % currentAvgTips,
+            '%0.2f' % lastDayAvgTips, tipAvgProgress, '%0.2f' % currentAvgDV, '%0.2f' % lastDayAvgDV, DVAvgProgress]
 
 def weeklyOrderProgress(db):
     today = datetime.today()
@@ -77,14 +97,17 @@ def weeklyOrderProgress(db):
             txDay = t['createdAt'].split('-')[2].split()[0]
             if txWeek == currentWeek:
                 thisWeekCount += 1
+                #print t['vendorCommission'],t['deliveryFee'],t['chargeFee'],thisWeekTR,math.isnan(t['vendorCommission'])
                 thisWeekTR += t['vendorCommission'] + t['deliveryFee'] + int(0 if t['chargeFee'] is None else t['chargeFee'])
                 thisWeekTips += t['tip']
-                currentDropVar += t['dropoffVariation']
+                if isinstance(t['dropoffVariation'], float) or isinstance(t['dropoffVariation'], int):
+                    currentDropVar += float(t['dropoffVariation'])
             elif txWeek == lastWeek and txDay <= txLimit:
                 lastWeekCount += 1
                 lastWeekTR += t['vendorCommission'] + t['deliveryFee'] + int(0 if t['chargeFee'] is None else t['chargeFee'])
                 lastWeekTips += t['tip']
-                pastDropVar += t['dropoffVariation']
+                if isinstance(t['dropoffVariation'], float) or isinstance(t['dropoffVariation'], int):
+                    pastDropVar += float(t['dropoffVariation'])
 
     currentOrderTR = thisWeekTR / int(1 if thisWeekCount is 0 else thisWeekCount)
     pastOrderTR = lastWeekTR / lastWeekCount
@@ -126,12 +149,14 @@ def monthlyOrderProgress(db):
                 thisMonthCount += 1
                 thisMonthTR += t['vendorCommission'] + t['deliveryFee'] + int(0 if t['chargeFee'] is None else t['chargeFee'])
                 thisMonthTips += t['tip']
-                currentDropVar += t['dropoffVariation']
+                if isinstance(t['dropoffVariation'], float) or isinstance(t['dropoffVariation'], int):
+                    currentDropVar += float(t['dropoffVariation'])
             elif txMonth == lastMonth and txDay <= txLimit:
                 lastMonthCount += 1
                 lastMonthTR += t['vendorCommission'] + t['deliveryFee'] + int(0 if t['chargeFee'] is None else t['chargeFee'])
                 lastMonthTips += t['tip']
-                pastDropVar += t['dropoffVariation']
+                if isinstance(t['dropoffVariation'], float) or isinstance(t['dropoffVariation'], int):
+                    pastDropVar += float(t['dropoffVariation'])
 
     currentOrderTR = thisMonthTR / int(1 if thisMonthCount is 0 else thisMonthCount)
     pastOrderTR = lastMonthTR / lastMonthCount
@@ -151,18 +176,18 @@ def monthlyOrderProgress(db):
             '%0.2f' % pastAvgTips, tipAvgProgress, '%0.2f' % currentAvgDropVar, '%0.2f' % pastAvgDropVar, dropVarProgress]
 
 def makeTable(db):
-    dailyOrderData = dailyOrderProgress(db)
-    weeklyOrderData = weeklyOrderProgress(db)
-    monthlyOrderData = monthlyOrderProgress(db)
+    dailyOrderData = dailyDataMetrics(db)
+    # weeklyOrderData = weeklyOrderProgress(db)
+    # monthlyOrderData = monthlyOrderProgress(db)
 
     print '\nHow are we doing?\n'
 
     calculations = ['Current Orders', 'Past Orders', 'Order % Change', 'Current TR', 'Past TR', 'TR % Change', 'Current TR/Order',
             'Past TR/Order', 'TR/Order % Change', 'Current Tips', 'Past Tips', 'Tips % Change', 'Current Tip AVG', 'Past Tip AVG',
-            'Tip AVG % Change']
+            'Tip AVG % Change', 'Current AVG Dropoff Variation', 'Past AVG Dropoff Variation', 'Dropoff Variation % Change']
     table = PrettyTable(['', 'Day', 'Week', 'Month'])
     for i in range(0, len(dailyOrderData)):
-        if i == 2 or i == 5 or i == 8 or i == 11 or i ==14:
+        if i == 2 or i == 5 or i == 8 or i == 11 or i == 14 or i == 17:
             table.add_row([calculations[i], dailyOrderData[i] + '%', weeklyOrderData[i] + '%', monthlyOrderData[i] + '%'])
         else:
             table.add_row([calculations[i], dailyOrderData[i], weeklyOrderData[i], monthlyOrderData[i]])
